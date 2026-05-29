@@ -1,0 +1,6 @@
+aiogram
+asyncpg
+fastapi
+pydantic-settings
+SQLAlchemy
+uvicorn[standard]
