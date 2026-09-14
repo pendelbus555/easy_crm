@@ -1,159 +1,188 @@
-# Telegram CRM MVP
+# Easy CRM — рабочее место менеджера для Telegram-диалогов
 
-Минимальный SaaS CRM для общения с клиентами из Telegram через веб-интерфейс.
+**Easy CRM** — MVP CRM для команд поддержки и продаж, которые общаются с клиентами через Telegram. Входящее сообщение из Telegram появляется в едином веб-интерфейсе, менеджер открывает историю диалога и отвечает клиенту, не переключаясь между чатами и Telegram-клиентом.
 
-Что уже есть:
+Проект демонстрирует интеграцию внешнего webhook API с асинхронным backend, хранение истории переписки и доставку обновлений в браузер в реальном времени.
 
-- Telegram webhook на FastAPI + aiogram принимает входящие сообщения.
-- Менеджер видит список чатов и историю сообщений в React/Vite.
-- Менеджер отвечает из веба, backend отправляет сообщение пользователю через Telegram Bot API.
-- PostgreSQL хранит `users`, `chats`, `messages`.
-- WebSocket обновляет интерфейс в realtime.
-- Локальный запуск через Docker Compose.
+> Статус: учебный/портфельный MVP. Авторизация менеджеров, роли и multi-tenant изоляция пока не входят в текущий scope.
+
+## Пользовательский сценарий
+
+```text
+Клиент пишет Telegram-боту
+          │
+          ▼
+Telegram webhook → FastAPI → PostgreSQL
+          │                         │
+          └──── WebSocket ──────────┘
+                    │
+                    ▼
+        React-интерфейс менеджера
+                    │
+                    ▼
+     Ответ менеджера → Telegram Bot API
+```
+
+1. Клиент отправляет сообщение боту.
+2. Telegram вызывает защищённый webhook backend.
+3. Backend создаёт или обновляет пользователя и чат, сохраняет сообщение.
+4. WebSocket отправляет событие подключённым менеджерам — новый чат/сообщение появляется без перезагрузки.
+5. Менеджер выбирает чат и отправляет ответ из CRM.
+6. Backend отправляет текст через Telegram Bot API и сохраняет исходящее сообщение в истории.
+
+## Возможности
+
+- список диалогов, отсортированный по последней активности;
+- карточка выбранного чата с историей входящих и исходящих сообщений;
+- отправка ответа клиенту через Telegram Bot API;
+- realtime-обновления списка чатов и текущего диалога через WebSocket;
+- сохранение пользователей, чатов и сообщений в PostgreSQL;
+- валидация webhook по `x-telegram-bot-api-secret-token`;
+- автоматическая регистрация webhook при старте backend, если задан публичный URL;
+- Swagger-документация FastAPI по адресу `/docs`;
+- запуск всего окружения одной командой Docker Compose.
+
+## Почему проект интересен технически
+
+- **Интеграция с внешним сервисом:** Telegram Update преобразуется в доменные сущности CRM, а исходящие сообщения проходят обратный путь через Bot API.
+- **Асинхронный стек:** FastAPI, `asyncio`, SQLAlchemy AsyncSession и `asyncpg` позволяют не блокировать обработку сетевых операций.
+- **Realtime без polling:** WebSocket broadcaster доставляет событие `message_created` в браузер сразу после сохранения сообщения.
+- **Целостная модель данных:** отдельные сущности `User`, `Chat` и `Message`, связи через foreign key, направления сообщений и временные метки.
+- **Разделение frontend/backend:** React отвечает за состояние интерфейса, FastAPI — за API, интеграцию и persistence.
+
+## Стек
+
+| Слой | Технологии |
+| --- | --- |
+| Frontend | React, Vite, Axios, WebSocket API |
+| Backend | Python, FastAPI, Uvicorn, Pydantic Settings |
+| Telegram | aiogram, Bot API, webhook |
+| Данные | PostgreSQL, SQLAlchemy 2, asyncpg |
+| Инфраструктура | Docker, Docker Compose, ngrok для локального webhook |
 
 ## Структура проекта
 
 ```text
-.
-├── .env.example
-├── docker-compose.yml
-├── README.md
-├── backend
-│   ├── Dockerfile
+easy_crm/
+├── docker-compose.yml          # db, backend и frontend
+├── .env.example                # настройки локального окружения
+├── backend/
+│   ├── main.py                 # FastAPI app, REST API, webhook, WebSocket
 │   ├── requirements.txt
-│   ├── main.py
-│   └── app
-│       ├── __init__.py
-│       ├── config.py
-│       ├── database.py
-│       ├── models.py
-│       ├── schemas.py
-│       ├── telegram.py
-│       └── websocket.py
-└── frontend
-    ├── Dockerfile
-    ├── index.html
+│   └── app/
+│       ├── config.py            # настройки через environment
+│       ├── database.py          # async engine и session
+│       ├── models.py            # User, Chat, Message
+│       ├── schemas.py           # Pydantic-схемы API
+│       ├── telegram.py          # bot, webhook и обработка Update
+│       └── websocket.py         # менеджер realtime-подключений
+└── frontend/
     ├── package.json
     ├── vite.config.js
-    └── src
-        ├── api.js
-        ├── App.jsx
-        ├── main.jsx
+    └── src/
+        ├── App.jsx              # экран CRM и управление состоянием
+        ├── api.js               # REST-клиент
         └── styles.css
 ```
 
-## Основные файлы
-
-- `docker-compose.yml` поднимает `db`, `backend`, `frontend`.
-- `backend/main.py` содержит FastAPI app, CORS, REST API, Telegram webhook и WebSocket endpoint.
-- `backend/app/models.py` содержит модели SQLAlchemy: `User`, `Chat`, `Message`.
-- `backend/app/telegram.py` содержит aiogram bot setup, webhook setup и сохранение входящих сообщений.
-- `backend/app/websocket.py` содержит простой in-memory WebSocket broadcaster.
-- `frontend/src/App.jsx` содержит страницу CRM: список чатов, окно сообщений, поле отправки.
-
 ## API
 
-- `GET /chats` — список чатов с последним сообщением.
-- `GET /messages/{chat_id}` — сообщения выбранного CRM-чата.
-- `POST /send-message` — отправка ответа в Telegram.
-- `POST /telegram/webhook` — webhook для Telegram.
-- `WS /ws` — realtime события для frontend.
+| Метод | Endpoint | Назначение |
+| --- | --- | --- |
+| `GET` | `/health` | health check backend |
+| `GET` | `/chats` | список чатов с последним сообщением |
+| `GET` | `/messages/{chat_id}` | история выбранного чата |
+| `POST` | `/send-message` | отправить ответ в Telegram и сохранить его |
+| `POST` | `/telegram/webhook` | принять Telegram Update |
+| `WS` | `/ws` | события новых сообщений для frontend |
 
-## Быстрый локальный запуск
+Swagger UI: <http://localhost:8000/docs>.
 
-Проект может стартовать без Telegram токена, но реальные входящие/исходящие сообщения заработают после настройки BotFather и ngrok.
+## Быстрый запуск через Docker
 
-```bash
-docker compose up
-```
-
-Открыть:
-
-- Frontend: http://localhost:5173
-- Backend: http://localhost:8000
-- Swagger: http://localhost:8000/docs
-
-## Настройка переменных окружения
-
-Создайте локальный `.env`:
+### 1. Подготовить окружение
 
 ```bash
 cp .env.example .env
 ```
 
-Минимально важные переменные:
+Для запуска интерфейса без реального Telegram-трафика достаточно оставить токен незаполненным. Для полноценного сценария получите токен у `@BotFather` и укажите его в `.env`:
 
 ```env
-TELEGRAM_BOT_TOKEN=123456:your_bot_token
-PUBLIC_WEBHOOK_URL=https://your-ngrok-url.ngrok-free.app
-TELEGRAM_WEBHOOK_SECRET=change_me_local_secret
+TELEGRAM_BOT_TOKEN=123456789:AA...
 ```
 
-## Как создать Telegram бота через BotFather
-
-1. Откройте Telegram и найдите `@BotFather`.
-2. Отправьте команду `/newbot`.
-3. Укажите имя бота, например `My CRM Bot`.
-4. Укажите username, который заканчивается на `bot`, например `my_crm_support_bot`.
-5. BotFather вернет token вида `123456789:AA...`.
-6. Вставьте token в `.env` как `TELEGRAM_BOT_TOKEN`.
-
-## Как поднять ngrok
-
-Установите и запустите ngrok:
-
-```bash
-ngrok http 8000
-```
-
-Скопируйте HTTPS URL, например:
-
-```text
-https://abc123.ngrok-free.app
-```
-
-Укажите его в `.env`:
-
-```env
-PUBLIC_WEBHOOK_URL=https://abc123.ngrok-free.app
-```
-
-Перезапустите backend:
+### 2. Запустить сервисы
 
 ```bash
 docker compose up --build
 ```
 
-Backend сам вызовет `setWebhook` при старте, если заданы `TELEGRAM_BOT_TOKEN` и `PUBLIC_WEBHOOK_URL`.
+Открыть:
 
-Webhook endpoint:
+- CRM: <http://localhost:5173>;
+- backend: <http://localhost:8000>;
+- Swagger: <http://localhost:8000/docs>.
 
-```text
-https://abc123.ngrok-free.app/telegram/webhook
+PostgreSQL инициализируется автоматически при старте backend через `create_all`. Для остановки сервисов:
+
+```bash
+docker compose down
 ```
 
-## Как проверить MVP
+Чтобы удалить также volume с данными PostgreSQL, используйте `docker compose down -v`.
 
-1. Запустите проект:
+## Подключение Telegram webhook
 
-   ```bash
-   docker compose up
-   ```
+Telegram требует публичный HTTPS-адрес. Для локальной демонстрации:
 
-2. Откройте frontend:
+```bash
+ngrok http 8000
+```
 
-   ```text
-   http://localhost:5173
-   ```
+Скопируйте HTTPS-адрес ngrok в `.env`:
 
-3. Напишите сообщение вашему Telegram боту.
-4. Чат появится в веб-интерфейсе.
-5. Выберите чат, напишите ответ и нажмите `Отправить`.
-6. Ответ уйдет пользователю в Telegram.
+```env
+PUBLIC_WEBHOOK_URL=https://your-subdomain.ngrok-free.app
+TELEGRAM_WEBHOOK_SECRET=change_me_local_secret
+```
+
+Backend сам зарегистрирует endpoint:
+
+```text
+https://your-subdomain.ngrok-free.app/telegram/webhook
+```
+
+Перезапустите окружение после изменения `.env`:
+
+```bash
+docker compose up --build
+```
+
+### Проверка полного сценария
+
+1. Откройте CRM на `http://localhost:5173`.
+2. Напишите вашему боту в Telegram.
+3. Убедитесь, что новый чат появился в списке без перезагрузки страницы.
+4. Откройте чат и отправьте ответ из CRM.
+5. Проверьте доставку ответа в Telegram и появление исходящего сообщения в истории.
+
+## Переменные окружения
+
+| Переменная | Назначение |
+| --- | --- |
+| `DATABASE_URL` | async-подключение backend к PostgreSQL |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | параметры контейнера PostgreSQL |
+| `FRONTEND_ORIGIN` | origin, разрешённый CORS |
+| `VITE_API_URL` | базовый URL REST API для frontend |
+| `VITE_WS_URL` | URL WebSocket для frontend |
+| `TELEGRAM_BOT_TOKEN` | токен бота от BotFather |
+| `PUBLIC_WEBHOOK_URL` | публичный HTTPS URL без `/telegram/webhook` |
+| `TELEGRAM_WEBHOOK_SECRET` | секрет проверки входящего webhook |
 
 ## Локальная разработка без Docker
 
-Backend:
+### Backend
 
 ```bash
 cd backend
@@ -163,7 +192,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-Frontend:
+### Frontend
 
 ```bash
 cd frontend
@@ -171,13 +200,14 @@ npm install
 npm run dev
 ```
 
-PostgreSQL должен быть доступен по `DATABASE_URL`.
+Для backend должен быть доступен PostgreSQL по `DATABASE_URL`, а frontend должен видеть backend по `VITE_API_URL` и `VITE_WS_URL`.
 
-## Что можно развивать дальше
+## Ограничения MVP и направления развития
 
-- Авторизация менеджеров.
-- Миграции Alembic вместо `create_all`.
-- Очередь фоновых задач для тяжелых Telegram операций.
-- Несколько Telegram ботов на одного workspace.
-- Роли, команды менеджеров и назначение чатов.
-- Биллинг и ограничения тарифов.
+- добавить авторизацию менеджеров, роли и разграничение доступа к чатам;
+- заменить `create_all` на миграции Alembic;
+- вынести realtime-доставку в Redis Pub/Sub или брокер сообщений для горизонтального масштабирования;
+- добавить обработку медиа, файлов и других типов Telegram Update;
+- добавить поиск, теги, статусы диалогов, назначение ответственного и непрочитанные сообщения;
+- покрыть backend unit/integration-тестами и добавить frontend-тесты;
+- настроить retry/idempotency для надёжной доставки webhook и исходящих сообщений.
